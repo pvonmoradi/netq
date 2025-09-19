@@ -1,0 +1,575 @@
+#!/bin/sh
+#
+# Author: Pooya Moradi
+# Date : 2021-05-07
+# License: MIT
+#
+# Description: A handy network query tool in POSIX shell
+#              Features local/public IP finding, bandwidth
+#              monitoring, internet connection checking
+# Dependencies: ip | ifconfig | hostname | nmcli
+#               curl | wget
+#               jq , awk, grep, bc, ts, ping
+
+version=0.19
+log_debug_flag=0
+ipv6_flag=0
+downloader=""
+l_sep="@"
+p_sep="•"
+# use symbols in STDOUT when output is empty
+special_formatting=0
+# query priority : cloudflare -> ip-api -> ipinfo ->
+#                  ifconfig.io -> (dig,whois)
+finders=$(
+    cat << EOF
+cloudflare.com
+ip-api.com
+ipinfo.io
+ifconfig.io
+EOF
+)
+IPSTACK_KEY=""
+
+show_help() {
+    cat << EOF
+Usage: netq [OPTIONS] COMMAND [OPTIONS] ARGS
+    netq local                  : Print local IP and SSID
+    netq public                 : Print public IP and country code
+    netq public -l              : List public IP finder methods
+    netq public "FINDERS_CSV"   : Print public IP using passed finders
+    netq public -f FILTER       : Print public IP using filtered finders
+    netq bandwidth INTERFACE    : Watch bandwidth usage of INTERFACE
+    netq check                  : Check internet connectivity
+    netq check URL              : Check whether URL can be downloaded
+    netq check -p               : Check internet connectivity via ping (on loop)
+    netq list                   : List interfaces
+    netq help                   : Show help
+Options:
+    -6: IPv6 mode
+    -V: Print version
+    -h: Show help
+Command aliases:
+    local: l, public: p, bandwidth: b|bw, check: c, list: ls
+EOF
+}
+
+log() {
+    _mode=""
+    case "$1" in
+        "error")
+            _mode="error"
+            ;;
+        "warn")
+            _mode="warn"
+            ;;
+        "info")
+            _mode="info"
+            ;;
+        "debug")
+            _mode="debug"
+            ;;
+    esac
+    # skip debug logs if flag is not set
+    if [ $_mode = "debug" ] && [ $log_debug_flag != 1 ]; then
+        return
+    fi
+    printf >&2 "[%-5s] %s\n" "$_mode" "$2"
+}
+
+check_deps() {
+    _err=0
+    for _app in "$@"; do
+        if ! command -v "$_app" > /dev/null 2>&1; then
+            log error "dependency $_app not found"
+            _err=1
+        fi
+    done
+    [ $_err -eq 1 ] && exit "$_err"
+}
+
+check_deps_any() {
+    _err=1
+    for _app in "$@"; do
+        if command -v "$_app" > /dev/null 2>&1; then
+            printf "%s" "$_app"
+            return
+        fi
+    done
+    log error "none of the dependencies '$*' were found (one is required)"
+    exit "$_err"
+}
+
+fetch() {
+    case $downloader in
+        curl)
+            if ! curl --silent --show-error --fail "$1"; then
+                return 1
+            fi
+            ;;
+        wget)
+            if ! wget --quiet -O- "$1"; then
+                return 1
+            fi
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+show_local_ip() {
+    # NetworkManager
+    if command -v nmcli > /dev/null 2>&1; then
+        if [ "$ipv6_flag" -eq 1 ]; then
+            result=$(nmcli -t -f GENERAL.CONNECTION,IP6.ADDRESS device show \
+                | awk \
+                    '/GENERAL.CONNECTION:/{
+                      gsub(/GENERAL.CONNECTION:/, "");
+                      con_id=$0}
+                      /IP6.ADDRESS\[1\]:/{
+                      gsub(/IP6.ADDRESS\[1\]:/, "");
+                      ip=$0;
+                      if (con_id && ip) {
+                        split(ip, ip_arr, "/");
+                        ipv6=ip_arr[1];
+                        # gsub("fe80::" , "", ipv6);
+                        print ipv6 "@" con_id
+                      }}')
+        else
+            result=$(nmcli -t -f GENERAL.CONNECTION,IP4.ADDRESS device show \
+                | awk -F: \
+                    '/GENERAL.CONNECTION:/{con_id=$2}
+                   /IP4.ADDRESS\[1\]:/{ip=$2}
+                   (con_id && ip) {
+                       split(ip, ip_arr, "/"); 
+                       print ip_arr[1] "@" con_id;
+                       ip="";con_id="";
+                   }')
+        fi
+    # ip
+    elif command -v ip > /dev/null 2>&1; then
+        if [ "$ipv6_flag" -eq 1 ]; then
+            result=$(ip -6 -brief address \
+                | awk -F'[[:space:]/]+' '
+                     ($2 == "UP") {print $3 "@" $1} ')
+            if [ -z "$result" ]; then
+                result=$(ip -6 -brief address \
+                    | awk -F'[[:space:]/]+' '
+                     {print $3 "@" $1} ')
+            fi
+        else
+            result=$(ip -4 -brief address \
+                | awk -F'[[:space:]/]+' '
+                     ($2 == "UP") {print $3 "@" $1} ')
+            if [ -z "$result" ]; then
+                result=$(ip -4 -brief address \
+                    | awk -F'[[:space:]/]+' '
+                     {print $3 "@" $1} ')
+            fi
+        fi
+    # ifconfig
+    elif command -v ifconfig > /dev/null 2>&1; then
+        if [ "$ipv6_flag" -eq 1 ]; then
+            result=$(ifconfig | awk '
+                      /^[a-zA-Z]/ {interface=$1; sub(/:$/, "", interface)}
+                      /inet6/ {print $2 "@" interface}')
+        else
+            result=$(ifconfig | awk '
+                      /^[a-zA-Z]/ {interface=$1; sub(/:$/, "", interface)}
+                      /inet [0-9]/ {print $2 "@" interface}')
+        fi
+
+    elif result=$(hostname -I 2> /dev/null); then
+        result="$(printf "%s" "$result" | tr ' ' '\n')"
+    fi
+
+    if [ -n "$result" ]; then
+        printf "%s\n" "$result"
+    else
+        if [ "$special_formatting" -eq 1 ]; then
+            printf "%s\n" "$l_sep"
+        else
+            log error "No local IP was found"
+        fi
+        exit 1
+    fi
+}
+
+get_cloudflare() {
+    resp=""
+    ip=""
+    country=""
+    finder="cloudflare"
+    # using cloudflare trace service
+    if ! resp=$(fetch "https://www.cloudflare.com/cdn-cgi/trace"); then
+        log error "Failed to get public IP using $finder "
+        return 1
+    fi
+    ip=$(printf "%s" "$resp" \
+        | awk -F'\n' '/^ip=/{ip=substr($1, 4)} END{print ip}')
+    country=$(printf "%s" "$resp" \
+        | awk -F'\n' '/^loc=/{loc=substr($1, 5)} END{print loc}')
+
+    if [ -n "$ip" ]; then
+        printf "%s • %s\n" "$ip" "$country"
+    fi
+}
+
+get_ip_by_query_json() {
+    finder="$1"
+    endpoint="$2"
+    filter="$3"
+    resp=""
+    if ! resp=$(fetch "$endpoint"); then
+        log error "Failed to get public IP using $finder "
+        return 1
+    fi
+
+    if ! printf "%s" "$resp" \
+        | jq --raw-output --exit-status \
+            "[$filter \
+                 | if . then . else error(\"No such key. Bad filter\") end] \
+                 | join(\" $p_sep \")"; then
+        return 1
+    fi
+}
+
+get_public_ip() {
+    case "$1" in
+        "cloudflare.com")
+            get_cloudflare
+            ;;
+        "ip-api.com")
+            get_ip_by_query_json "$1" \
+                "http://ip-api.com/json" \
+                ".query, .countryCode"
+            ;;
+        "ipstack.com")
+            get_ip_by_query_json "$1" \
+                "https://api.ipstack.com/check?access_key=$IPSTACK_KEY" \
+                ".ip, .country_code"
+            ;;
+        "ipinfo.io")
+            get_ip_by_query_json "$1" \
+                "https://ipinfo.io" \
+                ".ip, .country"
+            ;;
+        "ifconfig.io")
+            get_ip_by_query_json "$1" \
+                "https://ifconfig.io/all.json" \
+                ".ip, .country_code"
+
+            ;;
+        *)
+            log error "Unsupported finder method: $1"
+            return 1
+            ;;
+    esac
+}
+
+show_public_ip() {
+    is_found=0
+    for finder in $finders; do
+        log debug "Trying fetching public IP using $finder"
+        if get_public_ip "$finder"; then
+            is_found=1
+            log debug "Successfully found public IP using $finder"
+            break
+        fi
+    done
+    if [ $is_found -eq 0 ]; then
+        if [ "$special_formatting" -eq 1 ]; then
+            printf "×\n"
+            return 1
+        else
+            log error "No public IP was found"
+            return 1
+        fi
+    fi
+    # using dig and whois method
+    #ip=$(dig +short myip.opendns.com @resolver1.opendns.com)
+    #[ -z "$ip" ] && ip=$(dig +short @ns1-1.akamaitech.net ANY whoami.akamai.net)
+    #country=$(whois "$ip" | grep -Pio -m 1 "^country:\s*\K.*")
+}
+
+public_list_finders() {
+    printf "%s\n" "$finders"
+}
+
+handle_public_cmd() {
+    if ! downloader=$(check_deps_any curl wget); then
+        exit 1
+    fi
+
+    OPTIND=1
+    while getopts hlf: opt; do
+        case $opt in
+            h)
+                show_help
+                exit
+                ;;
+            f)
+                filter="$OPTARG"
+                ;;
+            l)
+                public_list_finders
+                return
+                ;;
+            *)
+                log error "Bad usage! Check help (-h)"
+                exit 2
+                ;;
+        esac
+    done
+    shift "$((OPTIND - 1))"
+    if [ -n "$1" ]; then
+        finders="$1"
+    fi
+    # filtering and csv conversion is handled by jq
+    if [ -n "$filter" ] || [ -n "$1" ]; then
+        [ -z "$filter" ] && filter="."
+        if ! finders=$(jq -r -n --arg x "$finders" --arg f "$filter" \
+            '$x
+             | split(",|\n"; null)
+             | map(select(test($f;"i")))
+             | .[]'); then
+            log error "Failed to filter public IP finders"
+            return 1
+        fi
+    fi
+    log debug "finders = $(printf "%s\n" "$finders" | tr '\n' ',')"
+
+    if ! show_public_ip; then
+        return 1
+    fi
+}
+
+list_interfaces() {
+    OPTIND=1
+    while getopts h opt; do
+        case $opt in
+            h)
+                show_help
+                exit
+                ;;
+            *)
+                log error "Bad usage! Check help (-h)"
+                exit 2
+                ;;
+        esac
+    done
+    shift "$((OPTIND - 1))"
+
+    if command -v ip > /dev/null 2>&1; then
+        if [ "$ipv6_flag" -eq 1 ]; then
+            ip -6 -brief address
+        else
+            ip -4 -brief address
+        fi
+    else
+        ls /sys/class/net
+    fi
+}
+
+watch_bandwidth() {
+    OPTIND=1
+    while getopts h opt; do
+        case $opt in
+            h)
+                show_help
+                exit
+                ;;
+            *)
+                log error "Bad usage! Check help (-h)"
+                exit 2
+                ;;
+        esac
+    done
+    shift "$((OPTIND - 1))"
+
+    dev=$1
+    if [ -z "$dev" ]; then
+        log error "Bad usage! No interface was passed. Run 'netq list'"
+        return 2
+    fi
+    if ! grep --silent "$dev:" /proc/net/dev; then
+        log error "No such interface: '$dev'. Run 'netq list'"
+        return 1
+    fi
+
+    read -r rx < "/sys/class/net/$dev/statistics/rx_bytes"
+    read -r tx < "/sys/class/net/$dev/statistics/tx_bytes"
+
+    # unit conversion
+    # in this function, Tx/Rx is limited to integers
+    format_val_sh() {
+        diff_val="$1"
+        fmt_val=""
+        if [ "$diff_val" -lt 1024 ]; then
+            # we are in Bytes range
+            fmt_val="$diff_val"
+            fmt_val=$(printf "%4d B" "$fmt_val")
+        elif [ "$diff_val" -ge 1024 ] \
+            && [ "$diff_val" -lt 1048576 ]; then
+            # we are in KibiBytes range
+            fmt_val=$((diff_val >> 10))
+            fmt_val=$(printf "%4d K" "$fmt_val")
+        else
+            # we are in MebiBytes range
+            fmt_val=$((diff_val >> 20))
+            fmt_val=$(printf "%4d M" "$fmt_val")
+        fi
+        printf "%s" "$fmt_val"
+    }
+
+    # this function uses bc only in MiB range
+    format_val_bc() {
+        diff_val="$1"
+        fmt_val=""
+        if [ "$diff_val" -lt 1024 ]; then
+            # we are in Bytes range
+            fmt_val="$diff_val"
+            fmt_val=$(printf "%6d B" "$fmt_val")
+        elif [ "$diff_val" -ge 1024 ] \
+            && [ "$diff_val" -lt 1048576 ]; then
+            # we are in KibiBytes range
+            fmt_val=$((diff_val >> 10))
+            fmt_val=$(printf "%6d K" "$fmt_val")
+        else
+            # we are in MebiBytes range
+            fmt_val=$(printf "scale=1; %s / (1024 * 1024)\n" "$diff_val" | bc)
+            fmt_val=$(printf "%6.1f M" "$fmt_val")
+        fi
+        printf "%s" "$fmt_val"
+    }
+
+    # delay for 0.5 sec which result in sampling frequency to be 2 Hz
+    while sleep 0.5; do
+        # raw bytes
+        read -r newrx < "/sys/class/net/$dev/statistics/rx_bytes"
+        read -r newtx < "/sys/class/net/$dev/statistics/tx_bytes"
+
+        # raw bytes
+        # multplication by f = 1/delay = 2 Hz
+        diff_rx=$((2 * (newrx - rx)))
+        diff_tx=$((2 * (newtx - tx)))
+
+        # formatted values
+        fmt_diff_rx=$(format_val_bc "$diff_rx")
+        fmt_diff_tx=$(format_val_bc "$diff_tx")
+        # printing the final result
+        printf "%s: ↓%s • ↑%s\t\r" "$dev" "$fmt_diff_rx" "$fmt_diff_tx"
+
+        # updating the values
+        rx=$newrx
+        tx=$newtx
+    done
+}
+
+handle_check_cmd() {
+    if ! downloader=$(check_deps_any curl wget); then
+        exit 1
+    fi
+
+    check_url="https://www.google.com"
+    ping_ip="8.8.8.8"
+    ping_mode=0
+
+    OPTIND=1
+    while getopts hp opt; do
+        case $opt in
+            h)
+                show_help
+                exit
+                ;;
+            p)
+                ping_mode=1
+                ;;
+            *)
+                log error "Bad usage! Check help (-h)"
+                exit 2
+                ;;
+        esac
+    done
+    shift "$((OPTIND - 1))"
+    if [ -n "$1" ]; then
+        check_url="$1"
+    fi
+
+    if [ "$ping_mode" -eq 1 ]; then
+        while ! str=$(ping -c 1 -W 3 "$ping_ip"); do
+            printf "%s\n" "$str" | ts
+            sleep 1s
+        done
+        printf ": online\n" | ts >&2
+        return
+    fi
+
+    if fetch "$check_url" > /dev/null; then
+        log info "Success in downloading $check_url"
+    else
+        log error "Failed to get $check_url"
+        return 1
+    fi
+}
+
+handle_cmd() {
+    while getopts Vv6hf opt; do
+        case $opt in
+            h)
+                show_help
+                exit
+                ;;
+            V)
+                printf "%s\n" "$version"
+                exit
+                ;;
+            v)
+                log_debug_flag=1
+                ;;
+            f)
+                special_formatting=1
+                ;;
+            6)
+                ipv6_flag=1
+                ;;
+            *)
+                log error "Bad usage! Check help (-h)"
+                return 2
+                ;;
+        esac
+    done
+    shift "$((OPTIND - 1))"
+    case $1 in
+        "local" | "l" | "")
+            show_local_ip
+            ;;
+        "public" | "p")
+            shift
+            handle_public_cmd "$@" || return 1
+            ;;
+        "bandwidth" | "bw" | "b")
+            shift
+            watch_bandwidth "$@" || return 1
+            ;;
+        "list" | "ls")
+            shift
+            list_interfaces || return 1
+            ;;
+        "check" | "c")
+            shift
+            handle_check_cmd "$@" || return 1
+            ;;
+        "help")
+            show_help
+            exit 0
+            ;;
+        *)
+            log error "Bad usage! Unknown command: '$1'. Check help (-h)"
+            return 2
+            ;;
+    esac
+}
+
+handle_cmd "$@"
