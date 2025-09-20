@@ -12,7 +12,7 @@
 #               dig | host | nslookup
 #               jq, ping, awk, bc, date, grep, tr
 
-version=0.23
+version=0.24
 log_debug_flag=""
 log_quiet_flag=""
 ipv6_flag=0
@@ -49,7 +49,7 @@ Usage: netq [OPTIONS] COMMAND [OPTIONS] ARGS
     netq public                 : Print public IP and country code (if possible)
     netq public -l              : List public IP finder methods
     netq public "FINDERS_CSV"   : Print public IP using passed finders
-    netq public -f FILTER       : Print public IP using filtered finders
+    netq public -e EXCL_REGEX   : Print public IP using filtered (BRE) finders
     netq bandwidth INTERFACE    : Watch bandwidth usage of INTERFACE
     netq check                  : Check internet connectivity
     netq check URL              : Check whether URL can be downloaded
@@ -423,7 +423,7 @@ get_public_ip() {
             ;;
         "bare-ifconfig.me")
             get_ip_by_query_text "$1" \
-                "ifconfig.me"
+                "ifconfig.me/ip"
             ;;
         "bare-icanhazip.com")
             get_ip_by_query_text "$1" \
@@ -494,24 +494,20 @@ show_public_ip() {
     #country=$(whois "$ip" | grep -Pio -m 1 "^country:\s*\K.*")
 }
 
-public_list_finders() {
-    printf "%s\n" "$finders"
-}
-
 handle_public_cmd() {
+    _only_do_list=""
     OPTIND=1
-    while getopts hlf: opt; do
+    while getopts hle: opt; do
         case $opt in
             h)
                 show_help
                 exit
                 ;;
-            f)
-                filter="$OPTARG"
+            e)
+                exclude_re="$OPTARG"
                 ;;
             l)
-                public_list_finders
-                return
+                _only_do_list=1
                 ;;
             *)
                 log error "Bad usage! Check help (-h)"
@@ -522,20 +518,22 @@ handle_public_cmd() {
     shift "$((OPTIND - 1))"
     if [ -n "$1" ]; then
         finders="$1"
+        finders=$(printf "%s" "$finders" | tr , '\n' | awk '{$1=$1; print}')
     fi
-    # filtering and csv conversion is handled by jq
-    if [ -n "$filter" ] || [ -n "$1" ]; then
-        [ -z "$filter" ] && filter="."
-        if ! finders=$(jq -r -n --arg x "$finders" --arg f "$filter" \
-            '$x
-             | split(",|\n"; null)
-             | map(select(test($f;"i")))
-             | .[]'); then
+
+    if [ -n "$exclude_re" ]; then
+        if ! finders=$(printf "%s" "$finders" | grep -v "$exclude_re"); then
             log error "Failed to filter public IP finders"
             return 1
         fi
     fi
     log debug "finders = $(printf "%s\n" "$finders" | tr '\n' ',')"
+
+    # handle -l switch (if passed) and return
+    if [ -n "$_only_do_list" ]; then
+        printf "%s\n" "$finders"
+        return
+    fi
 
     if ! show_public_ip; then
         return 1
