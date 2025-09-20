@@ -9,10 +9,10 @@
 #              monitoring, internet connection checking
 # Dependencies: ip | ifconfig | hostname | nmcli
 #               curl | wget
-#               jq , awk, grep, bc, ts, ping
+#               jq , awk, grep, bc, date, ping
 #               dig | host | nslookup
 
-version=0.21
+version=0.22
 log_debug_flag=""
 log_quiet_flag=""
 ipv6_flag=0
@@ -145,6 +145,14 @@ fetch() {
             fi
             ;;
         wget)
+            # check if this is busybox
+            if wget -V 2>&1 | grep -q -i 'busybox'; then
+                if ! wget -q -O- "$1"; then
+                    return 1
+                fi
+                return
+            fi
+
             if ! wget --quiet -"$_network" -O- "$1"; then
                 return 1
             fi
@@ -157,7 +165,7 @@ fetch() {
 
 show_local_ip() {
     # NetworkManager
-    if command -v nmcli > /dev/null 2>&1; then
+    if check_deps -q nmcli; then
         if [ "$ipv6_flag" -eq 1 ]; then
             result=$(nmcli -t -f GENERAL.CONNECTION,IP6.ADDRESS device show \
                 | awk \
@@ -185,7 +193,19 @@ show_local_ip() {
                    }')
         fi
     # ip
-    elif command -v ip > /dev/null 2>&1; then
+    elif check_deps -q ip; then
+        # handle busybox
+        if ip -V 2>&1 | grep -i -q 'busybox'; then
+            if [ "$ipv6_flag" -eq 1 ]; then
+                ip -o -6 addr \
+                    | awk '/inet6/ { split($4, ip, "/"); print ip[1] "@" $2 }'
+            else
+                ip -o -4 addr \
+                    | awk '/inet/ { split($4, ip, "/"); print ip[1] "@" $2 }'
+            fi
+            return
+        fi
+
         if [ "$ipv6_flag" -eq 1 ]; then
             result=$(ip -6 -brief address \
                 | awk -F'[[:space:]/]+' '
@@ -206,7 +226,7 @@ show_local_ip() {
             fi
         fi
     # ifconfig
-    elif command -v ifconfig > /dev/null 2>&1; then
+    elif check_deps -q ifconfig; then
         if [ "$ipv6_flag" -eq 1 ]; then
             result=$(ifconfig | awk '
                       /^[a-zA-Z]/ {interface=$1; sub(/:$/, "", interface)}
@@ -513,7 +533,18 @@ list_interfaces() {
     done
     shift "$((OPTIND - 1))"
 
-    if command -v ip > /dev/null 2>&1; then
+    if check_deps -q ip; then
+        # handle busybox
+        if ip -V 2>&1 | grep -i -q 'busybox'; then
+            if [ "$ipv6_flag" -eq 1 ]; then
+                ip -o -6 addr \
+                    | awk '/inet6/ { split($4, ip, "/"); print ip[1] "@" $2 }'
+            else
+                ip -o -4 addr \
+                    | awk '/inet/ { split($4, ip, "/"); print ip[1] "@" $2 }'
+            fi
+            return
+        fi
         if [ "$ipv6_flag" -eq 1 ]; then
             ip -6 -brief address
         else
@@ -545,7 +576,7 @@ watch_bandwidth() {
         log error "Bad usage! No interface was passed. Run 'netq list'"
         return 2
     fi
-    if ! grep --silent "$dev:" /proc/net/dev; then
+    if ! grep -q "$dev:" /proc/net/dev; then
         log error "No such interface: '$dev'. Run 'netq list'"
         return 1
     fi
@@ -651,10 +682,10 @@ handle_check_cmd() {
 
     if [ "$ping_mode" -eq 1 ]; then
         while ! str=$(ping -c 1 -W 3 "$ping_ip"); do
-            printf "%s\n" "$str" | ts
+            printf "%s: %s\n" "$(date "+%b %d %H:%M:%S")" "$str"
             sleep 1s
         done
-        printf ": online\n" | ts >&2
+        printf "%s: online\n" "$(date "+%b %d %H:%M:%S")"
         return
     fi
 
@@ -667,7 +698,7 @@ handle_check_cmd() {
 }
 
 handle_cmd() {
-    while getopts Vvq6hf opt; do
+    while getopts Vvq64hf opt; do
         case $opt in
             h)
                 show_help
@@ -687,6 +718,10 @@ handle_cmd() {
                 ;;
             f)
                 special_formatting=1
+                ;;
+            4)
+                # default, declared for consistency
+                ipv6_flag=""
                 ;;
             6)
                 ipv6_flag=1
