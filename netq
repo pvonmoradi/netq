@@ -12,7 +12,7 @@
 #               jq , awk, grep, bc, date, ping
 #               dig | host | nslookup
 
-version=0.22
+version=0.23
 log_debug_flag=""
 log_quiet_flag=""
 ipv6_flag=0
@@ -340,13 +340,36 @@ get_ip_by_dns() {
             printf "%s\n" "$_res"
         fi
     elif check_deps -q nslookup; then
-        [ "$_network" -eq "6" ] && return 1
-        _res=$(nslookup -type="$_type" -class="$_class" "$_name" "$_server") \
-            || return 1
-        if [ "$_raw" -eq 0 ]; then
-            printf "%s\n" "$_res" | awk -F '"' '/text/ {print $2}'
+        # busybox nslookup doesn't have -class
+        if [ "$_class" = "IN" ]; then
+            _res=$(nslookup -type="$_type" "$_name" "$_server") \
+                || return 1
         else
-            printf "%s\n" "$_res"
+            _res=$(nslookup -type="$_type" -class="$_class" "$_name" "$_server") \
+                || return 1
+        fi
+
+        if [ "$_raw" -eq 0 ]; then
+            _res=$(printf "%s\n" "$_res" | awk -F '"' '/text/ {print $2}')
+        else
+            _res=$(printf "%s\n" "$_res")
+        fi
+        # since there is no -6 switch here, we should manually check if the
+        # received ip is v4 or v6
+        if printf "%s" "$_res" | grep -i -q ':'; then
+            # ipv6
+            if [ "$_network" -eq "6" ]; then
+                printf "%s\n" "$_res"
+            else
+                return 1
+            fi
+        else
+            # ipv4
+            if [ "$_network" -eq "6" ]; then
+                return 1
+            else
+                printf "%s\n" "$_res"
+            fi
         fi
     else
         check_deps_any dig nslookup host > /dev/null
