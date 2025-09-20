@@ -9,8 +9,8 @@
 #              monitoring, internet connection checking
 # Dependencies: ip | ifconfig | hostname | nmcli
 #               curl | wget
-#               jq , awk, grep, bc, date, ping
 #               dig | host | nslookup
+#               jq, ping, awk, bc, date, grep, tr
 
 version=0.23
 log_debug_flag=""
@@ -45,8 +45,8 @@ IPSTACK_KEY=""
 show_help() {
     cat << EOF
 Usage: netq [OPTIONS] COMMAND [OPTIONS] ARGS
-    netq local                  : Print local IP and SSID
-    netq public                 : Print public IP and country code
+    netq local                  : Print local IP and network name (SSID, etc)
+    netq public                 : Print public IP and country code (if possible)
     netq public -l              : List public IP finder methods
     netq public "FINDERS_CSV"   : Print public IP using passed finders
     netq public -f FILTER       : Print public IP using filtered finders
@@ -168,7 +168,7 @@ show_local_ip() {
     if check_deps -q nmcli; then
         if [ "$ipv6_flag" -eq 1 ]; then
             result=$(nmcli -t -f GENERAL.CONNECTION,IP6.ADDRESS device show \
-                | awk \
+                | awk -v sep="$l_sep" \
                     '/GENERAL.CONNECTION:/{
                       gsub(/GENERAL.CONNECTION:/, "");
                       con_id=$0}
@@ -179,16 +179,16 @@ show_local_ip() {
                         split(ip, ip_arr, "/");
                         ipv6=ip_arr[1];
                         # gsub("fe80::" , "", ipv6);
-                        print ipv6 "@" con_id
+                        print ipv6 sep con_id
                       }}')
         else
             result=$(nmcli -t -f GENERAL.CONNECTION,IP4.ADDRESS device show \
-                | awk -F: \
+                | awk -F: -v sep="$l_sep" \
                     '/GENERAL.CONNECTION:/{con_id=$2}
                    /IP4.ADDRESS\[1\]:/{ip=$2}
                    (con_id && ip) {
                        split(ip, ip_arr, "/"); 
-                       print ip_arr[1] "@" con_id;
+                       print ip_arr[1] sep con_id;
                        ip="";con_id="";
                    }')
         fi
@@ -198,43 +198,45 @@ show_local_ip() {
         if ip -V 2>&1 | grep -i -q 'busybox'; then
             if [ "$ipv6_flag" -eq 1 ]; then
                 ip -o -6 addr \
-                    | awk '/inet6/ { split($4, ip, "/"); print ip[1] "@" $2 }'
+                    | awk -v sep="$l_sep" \
+                        '/inet6/ { split($4, ip, "/"); print ip[1] sep $2 }'
             else
                 ip -o -4 addr \
-                    | awk '/inet/ { split($4, ip, "/"); print ip[1] "@" $2 }'
+                    | awk -v sep="$l_sep" \
+                        '/inet/ { split($4, ip, "/"); print ip[1] sep $2 }'
             fi
             return
         fi
 
         if [ "$ipv6_flag" -eq 1 ]; then
             result=$(ip -6 -brief address \
-                | awk -F'[[:space:]/]+' '
-                     ($2 == "UP") {print $3 "@" $1} ')
+                | awk -F'[[:space:]/]+' -v sep="$l_sep" '
+                     ($2 == "UP") {print $3 sep $1} ')
             if [ -z "$result" ]; then
                 result=$(ip -6 -brief address \
-                    | awk -F'[[:space:]/]+' '
-                     {print $3 "@" $1} ')
+                    | awk -F'[[:space:]/]+' -v sep="$l_sep" '
+                     {print $3 sep $1} ')
             fi
         else
             result=$(ip -4 -brief address \
-                | awk -F'[[:space:]/]+' '
-                     ($2 == "UP") {print $3 "@" $1} ')
+                | awk -F'[[:space:]/]+' -v sep="$l_sep" '
+                     ($2 == "UP") {print $3 sep $1} ')
             if [ -z "$result" ]; then
                 result=$(ip -4 -brief address \
-                    | awk -F'[[:space:]/]+' '
-                     {print $3 "@" $1} ')
+                    | awk -F'[[:space:]/]+' -v sep="$l_sep" '
+                     {print $3 sep $1} ')
             fi
         fi
     # ifconfig
     elif check_deps -q ifconfig; then
         if [ "$ipv6_flag" -eq 1 ]; then
-            result=$(ifconfig | awk '
+            result=$(ifconfig | awk -v sep="$l_sep"'
                       /^[a-zA-Z]/ {interface=$1; sub(/:$/, "", interface)}
-                      /inet6/ {print $2 "@" interface}')
+                      /inet6/ {print $2 sep interface}')
         else
-            result=$(ifconfig | awk '
+            result=$(ifconfig | awk -v sep="$l_sep"'
                       /^[a-zA-Z]/ {interface=$1; sub(/:$/, "", interface)}
-                      /inet [0-9]/ {print $2 "@" interface}')
+                      /inet [0-9]/ {print $2 sep interface}')
         fi
 
     elif result=$(hostname -I 2> /dev/null); then
@@ -561,10 +563,12 @@ list_interfaces() {
         if ip -V 2>&1 | grep -i -q 'busybox'; then
             if [ "$ipv6_flag" -eq 1 ]; then
                 ip -o -6 addr \
-                    | awk '/inet6/ { split($4, ip, "/"); print ip[1] "@" $2 }'
+                    | awk -v sep="$l_sep" \
+                        '/inet6/ { split($4, ip, "/"); print ip[1] sep $2 }'
             else
                 ip -o -4 addr \
-                    | awk '/inet/ { split($4, ip, "/"); print ip[1] "@" $2 }'
+                    | awk -v sep="$l_sep" \
+                        '/inet/ { split($4, ip, "/"); print ip[1] sep $2 }'
             fi
             return
         fi
