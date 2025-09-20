@@ -10,23 +10,33 @@
 # Dependencies: ip | ifconfig | hostname | nmcli
 #               curl | wget
 #               jq , awk, grep, bc, ts, ping
+#               dig | host | nslookup
 
-version=0.19
+version=0.20
 log_debug_flag=0
 ipv6_flag=0
 downloader=""
-l_sep="@"
-p_sep="•"
+l_sep="@" # separator between local IP and device/SSID name
+p_sep="•" # separator between public IP and country
 # use symbols in STDOUT when output is empty
 special_formatting=0
-# query priority : cloudflare -> ip-api -> ipinfo ->
-#                  ifconfig.io -> (dig,whois)
+# default query priority, move up the desired line to prioritize
 finders=$(
     cat << EOF
 cloudflare.com
-ip-api.com
+ip.network
 ipinfo.io
 ifconfig.io
+ifconfig.co
+ip-api.com
+bare-checkip.amazonaws.com
+bare-api.ipify.org
+bare-ifconfig.me
+bare-icanhazip.com
+dns-google
+dns-cloudflare
+dns-toys
+dns-akamai
 EOF
 )
 IPSTACK_KEY=""
@@ -78,14 +88,27 @@ log() {
 }
 
 check_deps() {
+    OPTIND=1
+    while getopts q opt; do
+        case $opt in
+            q)
+                _silent=1
+                ;;
+            *)
+                log error "Bad usage!"
+                return 2
+                ;;
+        esac
+    done
+    shift "$((OPTIND - 1))"
     _err=0
     for _app in "$@"; do
         if ! command -v "$_app" > /dev/null 2>&1; then
-            log error "dependency $_app not found"
+            [ -z "$_silent" ] && log error "dependency $_app not found"
             _err=1
         fi
     done
-    [ $_err -eq 1 ] && exit "$_err"
+    return "$_err"
 }
 
 check_deps_any() {
@@ -96,19 +119,29 @@ check_deps_any() {
             return
         fi
     done
-    log error "none of the dependencies '$*' were found (one is required)"
-    exit "$_err"
+    log error "None of the dependencies '$*' were found (one is required)"
+    return "$_err"
 }
 
 fetch() {
+    if [ "$ipv6_flag" -eq 1 ]; then
+        _network="6"
+    else
+        _network="4"
+    fi
+
+    if ! downloader=$(check_deps_any curl wget); then
+        return 1
+    fi
+
     case $downloader in
         curl)
-            if ! curl --silent --show-error --fail "$1"; then
+            if ! curl --silent --show-error --fail -"$_network" "$1"; then
                 return 1
             fi
             ;;
         wget)
-            if ! wget --quiet -O- "$1"; then
+            if ! wget --quiet -"$_network" -O- "$1"; then
                 return 1
             fi
             ;;
@@ -197,40 +230,103 @@ show_local_ip() {
 }
 
 get_cloudflare() {
-    resp=""
-    ip=""
-    country=""
-    finder="cloudflare"
+    _resp=""
+    _ip=""
+    _country=""
+    _finder="cloudflare"
+
     # using cloudflare trace service
-    if ! resp=$(fetch "https://www.cloudflare.com/cdn-cgi/trace"); then
-        log error "Failed to get public IP using $finder "
+    if ! _resp=$(fetch "https://www.cloudflare.com/cdn-cgi/trace"); then
+        log error "Failed to get public IP using $_finder "
         return 1
     fi
-    ip=$(printf "%s" "$resp" \
+    _ip=$(printf "%s" "$_resp" \
         | awk -F'\n' '/^ip=/{ip=substr($1, 4)} END{print ip}')
-    country=$(printf "%s" "$resp" \
+    _country=$(printf "%s" "$_resp" \
         | awk -F'\n' '/^loc=/{loc=substr($1, 5)} END{print loc}')
 
-    if [ -n "$ip" ]; then
-        printf "%s • %s\n" "$ip" "$country"
+    if [ -n "$_ip" ]; then
+        printf "%s • %s\n" "$_ip" "$_country"
     fi
 }
 
 get_ip_by_query_json() {
-    finder="$1"
-    endpoint="$2"
-    filter="$3"
-    resp=""
-    if ! resp=$(fetch "$endpoint"); then
-        log error "Failed to get public IP using $finder "
+    _finder="$1"
+    _endpoint="$2"
+    _filter="$3"
+    _resp=""
+
+    check_deps jq || return 1
+
+    if ! _resp=$(fetch "$_endpoint"); then
+        log error "Failed to get public IP using $_finder "
         return 1
     fi
 
-    if ! printf "%s" "$resp" \
+    if ! printf "%s" "$_resp" \
         | jq --raw-output --exit-status \
-            "[$filter \
+            "[$_filter \
                  | if . then . else error(\"No such key. Bad filter\") end] \
                  | join(\" $p_sep \")"; then
+        return 1
+    fi
+}
+
+get_ip_by_query_text() {
+    _finder="$1"
+    _endpoint="$2"
+    _resp=""
+
+    if ! _resp=$(fetch "$_endpoint"); then
+        log error "Failed to get public IP using $_finder"
+        return 1
+    fi
+    printf "%s\n" "$_resp"
+}
+
+get_ip_by_dns() {
+    _finder="$1"
+    _name="$2"
+    _server="$3"
+    _type="$4"
+    _class="$5"
+    _raw="$6"
+    _res=""
+    if [ "$ipv6_flag" -eq 1 ]; then
+        _network="6"
+    else
+        _network="4"
+    fi
+    if check_deps -q dig; then
+        _res=$(dig -"$_network" \
+            +short @"$_server" -c "$_class" -t "$_type" "$_name") \
+            || return 1
+        if [ "$_raw" -eq 0 ]; then
+            printf "%s\n" "$_res" | awk -F '"' '{print $2}'
+        else
+            printf "%s\n" "$_res"
+        fi
+    elif check_deps -q host; then
+        _res=$(host -"$_network" \
+            -t "$_type" -c "$_class" "$_name" "$_server") \
+            || return 1
+        if [ "$_raw" -eq 0 ]; then
+            printf "%s\n" "$_res" | awk -F '"' '/text/ {print $2}'
+        else
+            printf "%s\n" "$_res"
+        fi
+    elif check_deps -q nslookup; then
+        [ "$_network" -eq "6" ] && return 1
+        _res=$(nslookup -type="$_type" -class="$_class" "$_name" "$_server") \
+            || return 1
+        if [ "$_raw" -eq 0 ]; then
+            printf "%s\n" "$_res" | awk -F '"' '/text/ {print $2}'
+        else
+            printf "%s\n" "$_res"
+        fi
+    else
+        check_deps_any dig nslookup host > /dev/null
+        log error "Failed to get public IP using $_finder"
         return 1
     fi
 }
@@ -240,10 +336,10 @@ get_public_ip() {
         "cloudflare.com")
             get_cloudflare
             ;;
-        "ip-api.com")
+        "ip.network")
             get_ip_by_query_json "$1" \
-                "http://ip-api.com/json" \
-                ".query, .countryCode"
+                "https://ip.network/more" \
+                ".ip, .country"
             ;;
         "ipstack.com")
             get_ip_by_query_json "$1" \
@@ -260,6 +356,65 @@ get_public_ip() {
                 "https://ifconfig.io/all.json" \
                 ".ip, .country_code"
 
+            ;;
+        "ifconfig.co")
+            get_ip_by_query_json "$1" \
+                "https://ifconfig.co/json" \
+                ".ip, .country_iso"
+
+            ;;
+        "ip-api.com")
+            get_ip_by_query_json "$1" \
+                "http://ip-api.com/json" \
+                ".query, .countryCode"
+            ;;
+        "bare-api.ipify.org")
+            get_ip_by_query_text "$1" \
+                "https://api.ipify.org"
+            ;;
+        "bare-ifconfig.me")
+            get_ip_by_query_text "$1" \
+                "ifconfig.me"
+            ;;
+        "bare-icanhazip.com")
+            get_ip_by_query_text "$1" \
+                "https://icanhazip.com"
+            ;;
+        "bare-checkip.amazonaws.com")
+            get_ip_by_query_text "$1" \
+                "https://checkip.amazonaws.com"
+            ;;
+        "dns-google")
+            get_ip_by_dns "$1" \
+                "o-o.myaddr.l.google.com" \
+                "ns1.google.com" \
+                "TXT" \
+                "IN" \
+                "0"
+            ;;
+        "dns-cloudflare")
+            get_ip_by_dns "$1" \
+                "whoami.cloudflare" \
+                "1.0.0.1" \
+                "TXT" \
+                "CH" \
+                "0"
+            ;;
+        "dns-toys")
+            get_ip_by_dns "$1" \
+                "ip" \
+                "dns.toys" \
+                "TXT" \
+                "IN" \
+                "0"
+            ;;
+        "dns-akamai")
+            get_ip_by_dns "$1" \
+                "whoami.akamai.net" \
+                "ns1-1.akamaitech.net" \
+                "ANY" \
+                "IN" \
+                "1"
             ;;
         *)
             log error "Unsupported finder method: $1"
@@ -287,9 +442,6 @@ show_public_ip() {
             return 1
         fi
     fi
-    # using dig and whois method
-    #ip=$(dig +short myip.opendns.com @resolver1.opendns.com)
-    #[ -z "$ip" ] && ip=$(dig +short @ns1-1.akamaitech.net ANY whoami.akamai.net)
     #country=$(whois "$ip" | grep -Pio -m 1 "^country:\s*\K.*")
 }
 
@@ -298,10 +450,6 @@ public_list_finders() {
 }
 
 handle_public_cmd() {
-    if ! downloader=$(check_deps_any curl wget); then
-        exit 1
-    fi
-
     OPTIND=1
     while getopts hlf: opt; do
         case $opt in
