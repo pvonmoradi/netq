@@ -12,7 +12,7 @@
 #               dig | host | nslookup
 #               jq, ping, awk, bc, date, grep, tr
 
-version=0.24
+version=0.25
 log_debug_flag=""
 log_quiet_flag=""
 ipv6_flag=0
@@ -187,7 +187,7 @@ show_local_ip() {
                     '/GENERAL.CONNECTION:/{con_id=$2}
                    /IP4.ADDRESS\[1\]:/{ip=$2}
                    (con_id && ip) {
-                       split(ip, ip_arr, "/"); 
+                       split(ip, ip_arr, "/");
                        print ip_arr[1] sep con_id;
                        ip="";con_id="";
                    }')
@@ -230,11 +230,11 @@ show_local_ip() {
     # ifconfig
     elif check_deps -q ifconfig; then
         if [ "$ipv6_flag" -eq 1 ]; then
-            result=$(ifconfig | awk -v sep="$l_sep"'
+            result=$(ifconfig | awk -v sep="$l_sep" '
                       /^[a-zA-Z]/ {interface=$1; sub(/:$/, "", interface)}
                       /inet6/ {print $2 sep interface}')
         else
-            result=$(ifconfig | awk -v sep="$l_sep"'
+            result=$(ifconfig | awk -v sep="$l_sep" '
                       /^[a-zA-Z]/ {interface=$1; sub(/:$/, "", interface)}
                       /inet [0-9]/ {print $2 sep interface}')
         fi
@@ -380,6 +380,27 @@ get_ip_by_dns() {
     fi
 }
 
+get_ip_by_dns_cloudflare() {
+    if [ "$ipv6_flag" -eq 1 ]; then
+        _server="2606:4700:4700::1001"
+    else
+        _server="1.0.0.1"
+    fi
+    if ! _res=$(get_ip_by_dns "dns-cloudflare" \
+        "whoami.cloudflare" \
+        "$_server" \
+        "TXT" \
+        "CH" \
+        "0"); then
+        return 1
+    fi
+    if [ -n "$_res" ]; then
+        printf "%s\n" "$_res"
+    else
+        return 1
+    fi
+}
+
 get_public_ip() {
     case "$1" in
         "cloudflare.com")
@@ -442,12 +463,7 @@ get_public_ip() {
                 "0"
             ;;
         "dns-cloudflare")
-            get_ip_by_dns "$1" \
-                "whoami.cloudflare" \
-                "1.0.0.1" \
-                "TXT" \
-                "CH" \
-                "0"
+            get_ip_by_dns_cloudflare
             ;;
         "dns-toys")
             get_ip_by_dns "$1" \
@@ -491,7 +507,6 @@ show_public_ip() {
             return 1
         fi
     fi
-    #country=$(whois "$ip" | grep -Pio -m 1 "^country:\s*\K.*")
 }
 
 handle_public_cmd() {
