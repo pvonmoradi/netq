@@ -12,21 +12,15 @@
 #               dig | host | nslookup
 #               jq, ping, awk, bc, date, grep, tr, uname
 
-version=0.28
-log_debug_flag=""
-log_quiet_flag=""
-ipv6_flag=0
-downloader=""
+version=0.29
 l_sep="@" # separator between local IP and device/SSID name
 p_sep="•" # separator between public IP and country
-# use symbols in STDOUT when output is empty
-special_formatting=0
 # default query priority, move up the desired line to prioritize
 finders=$(
     cat << EOF
 cloudflare.com
-ip.network
 ipinfo.io
+ip.network
 ifconfig.io
 ifconfig.co
 ip-api.com
@@ -40,7 +34,14 @@ dns-toys
 dns-akamai
 EOF
 )
-IPSTACK_KEY=""
+IPSTACK_KEY="" # if set, add "ipstack.com" to finders variable above
+check_url="https://www.google.com" # default test url for check
+ping_ip="8.8.8.8" # default ping ip for check
+special_formatting=0 # use symbols in STDOUT when output is empty
+log_debug_flag=""
+log_quiet_flag=""
+ipv6_flag=0
+downloader=""
 
 show_help() {
     cat << EOF
@@ -181,7 +182,6 @@ show_local_ip() {
                       if (con_id && ip) {
                         split(ip, ip_arr, "/");
                         ipv6=ip_arr[1];
-                        # gsub("fe80::" , "", ipv6);
                         print ipv6 sep con_id
                       }}')
         else
@@ -247,7 +247,7 @@ show_local_ip() {
 
     # handle windows/msys2 case
     elif uname -a | grep -q -i 'mingw'; then
-        check_deps netsh || return 1
+        check_deps netsh
         result=$(netsh interface ip show addresses \
             | awk -v sep="$l_sep" 'BEGIN {RS = ""} {
                if (match($0, /"([^"]*)"/)) {
@@ -256,6 +256,8 @@ show_local_ip() {
                  if (length(addr) > 1) print addr[1] sep interface
                  }
                }')
+    else
+        log error "Unsupported platform"
     fi
 
     if [ -n "$result" ]; then
@@ -477,13 +479,11 @@ get_public_ip() {
             get_ip_by_query_json "$1" \
                 "https://ifconfig.io/all.json" \
                 ".ip, .country_code"
-
             ;;
         "ifconfig.co")
             get_ip_by_query_json "$1" \
                 "https://ifconfig.co/json" \
                 ".ip, .country_iso"
-
             ;;
         "ip-api.com")
             get_ip_by_query_text_ip_api
@@ -747,12 +747,6 @@ watch_bandwidth() {
 }
 
 handle_check_cmd() {
-    if ! downloader=$(check_deps_any curl wget); then
-        exit 1
-    fi
-
-    check_url="https://www.google.com"
-    ping_ip="8.8.8.8"
     ping_mode=0
 
     OPTIND=1
@@ -832,7 +826,8 @@ handle_cmd() {
 
     case $1 in
         "local" | "l" | "")
-            show_local_ip
+            shift
+            show_local_ip || return 1
             ;;
         "public" | "p")
             shift
