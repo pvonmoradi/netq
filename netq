@@ -12,7 +12,7 @@
 #               dig | host | nslookup
 #               jq, ping, awk, bc, date, grep, tr, uname
 
-version=0.27
+version=0.28
 log_debug_flag=""
 log_quiet_flag=""
 ipv6_flag=0
@@ -325,6 +325,15 @@ get_ip_by_query_text() {
     printf "%s\n" "$_resp"
 }
 
+get_ip_by_query_text_ip_api() {
+    if ! _resp=$(get_ip_by_query_text \
+        "ip-api.com" \
+        "http://ip-api.com/csv/?fields=countryCode,query"); then
+        return 1
+    fi
+    printf "%s\n" "$_resp" | awk -F"," -v sep=" $p_sep " '{print $2 sep $1}'
+}
+
 get_ip_by_dns() {
     _finder="$1"
     _name="$2"
@@ -477,9 +486,7 @@ get_public_ip() {
 
             ;;
         "ip-api.com")
-            get_ip_by_query_json "$1" \
-                "http://ip-api.com/json" \
-                ".query, .countryCode"
+            get_ip_by_query_text_ip_api
             ;;
         "bare-api.ipify.org")
             get_ip_by_query_text "$1" \
