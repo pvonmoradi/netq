@@ -12,7 +12,7 @@
 #               dig | host | nslookup
 #               jq, ping, awk, bc, date, grep, tr, uname
 
-version=0.29
+version=0.31
 l_sep="@" # separator between local IP and device/SSID name
 p_sep="•" # separator between public IP and country
 # default query priority, move up the desired line to prioritize
@@ -34,10 +34,10 @@ dns-toys
 dns-akamai
 EOF
 )
-IPSTACK_KEY="" # if set, add "ipstack.com" to finders variable above
+IPSTACK_KEY=""                     # if set, add "ipstack.com" to finders above
 check_url="https://www.google.com" # default test url for check
-ping_ip="8.8.8.8" # default ping ip for check
-special_formatting=0 # use symbols in STDOUT when output is empty
+ping_ip="8.8.8.8"                  # default ping ip for check
+special_formatting=0               # use symbols in STDOUT when output is empty
 log_debug_flag=""
 log_quiet_flag=""
 ipv6_flag=0
@@ -299,7 +299,10 @@ get_ip_by_query_json() {
     _filter="$3"
     _resp=""
 
-    check_deps jq || return 1
+    if ! check_deps jq; then
+        log error "Failed to get public IP using $_finder "
+        return 1
+    fi
 
     if ! _resp=$(fetch "$_endpoint"); then
         log error "Failed to get public IP using $_finder "
@@ -342,7 +345,6 @@ get_ip_by_dns() {
     _server="$3"
     _type="$4"
     _class="$5"
-    _raw="$6"
     _res=""
     if [ "$ipv6_flag" -eq 1 ]; then
         _network="6"
@@ -350,46 +352,61 @@ get_ip_by_dns() {
         _network="4"
     fi
     if check_deps -q dig; then
-        _res=$(dig -"$_network" \
-            +short @"$_server" -c "$_class" -t "$_type" "$_name") \
-            || return 1
-
-        [ -z "$_res" ] && return 1
-
-        if [ "$_raw" -eq 0 ]; then
-            printf "%s\n" "$_res" | awk -F '"' '{print $2}'
-        else
-            printf "%s\n" "$_res"
+        if ! _res=$(dig -"$_network" \
+            +short @"$_server" -c "$_class" -t "$_type" "$_name"); then
+            log error "Failed to get public IP using $_finder"
+            return 1
         fi
+
+        if [ -z "$_res" ]; then
+            log error "Failed to get public IP using $_finder"
+            return 1
+        fi
+
+        _res2=$(printf "%s\n" "$_res" | awk -F '"' '{print $2}')
+
+        if [ -z "$_res2" ]; then
+            log error "Failed to get public IP using $_finder"
+            return 1
+        fi
+
+        printf "%s\n" "$_res2"
+
     elif check_deps -q host; then
-        _res=$(host -"$_network" \
-            -t "$_type" -c "$_class" "$_name" "$_server") \
-            || return 1
-
-        [ -z "$_res" ] && return 1
-
-        if [ "$_raw" -eq 0 ]; then
-            printf "%s\n" "$_res" | awk -F '"' '/text/ {print $2}'
-        else
-            printf "%s\n" "$_res"
+        if ! _res=$(host -"$_network" \
+            -t "$_type" -c "$_class" "$_name" "$_server"); then
+            log error "Failed to get public IP using $_finder"
+            return 1
         fi
+
+        if [ -z "$_res" ]; then
+            log error "Failed to get public IP using $_finder"
+            return 1
+        fi
+
+        printf "%s\n" "$_res" | awk -F '"' '/text/ {print $2}'
+
     elif check_deps -q nslookup; then
         # busybox nslookup doesn't have -class
         if [ "$_class" = "IN" ]; then
-            _res=$(nslookup -type="$_type" "$_name" "$_server") \
-                || return 1
+            if ! _res=$(nslookup -type="$_type" "$_name" "$_server"); then
+                log error "Failed to get public IP using $_finder"
+                return 1
+            fi
         else
-            _res=$(nslookup -type="$_type" -class="$_class" "$_name" "$_server") \
-                || return 1
+            if ! _res=$(nslookup -type="$_type" -class="$_class" \
+                "$_name" "$_server"); then
+                log error "Failed to get public IP using $_finder"
+                return 1
+            fi
         fi
 
-        [ -z "$_res" ] && return 1
-
-        if [ "$_raw" -eq 0 ]; then
-            _res2=$(printf "%s\n" "$_res" | awk -F '"' '/text/ {print $2}')
-        else
-            _res2=$(printf "%s\n" "$_res")
+        if [ -z "$_res" ]; then
+            log error "Failed to get public IP using $_finder"
+            return 1
         fi
+
+        _res2=$(printf "%s\n" "$_res" | awk -F '"' '/text/ {print $2}')
 
         # see if we're dealing with windows nslookup here
         if command -v nslookup 2>&1 | grep -q -i 'windows/system32'; then
@@ -409,11 +426,13 @@ get_ip_by_dns() {
             if [ "$_network" -eq "6" ]; then
                 printf "%s\n" "$_res2"
             else
+                log error "Failed to get public IP using $_finder"
                 return 1
             fi
         else
             # ipv4
             if [ "$_network" -eq "6" ]; then
+                log error "Failed to get public IP using $_finder"
                 return 1
             else
                 printf "%s\n" "$_res2"
@@ -426,7 +445,81 @@ get_ip_by_dns() {
     fi
 }
 
+get_ip_by_dns_akamai() {
+    _finder="dns-akamai"
+    _name="whoami.akamai.net"
+    _server="ns1-1.akamaitech.net"
+    _type="ANY"
+
+    if [ "$ipv6_flag" -eq 1 ]; then
+        # No IPv6 for ns1-1.akamaitech.net
+        log error "Failed to get public IP using $_finder"
+        return 1
+    else
+        _network=4
+    fi
+
+    if check_deps -q dig; then
+        if ! _res=$(dig -"$_network" \
+            +short @"$_server" -t "$_type" "$_name"); then
+            log error "Failed to get public IP using $_finder"
+            return 1
+        fi
+        if [ -z "$_res" ]; then
+            log error "Failed to get public IP using $_finder"
+            return 1
+        fi
+        printf "%s\n" "$_res"
+
+    elif check_deps -q host; then
+        if ! _res=$(host -"$_network" \
+            -t "$_type" "$_name" "$_server"); then
+            log error "Failed to get public IP using $_finder"
+            return 1
+        fi
+        if [ -z "$_res" ]; then
+            log error "Failed to get public IP using $_finder"
+            return 1
+        fi
+
+        printf "%s\n" "$_res" | awk '/has address/ {print $4}'
+
+    elif check_deps -q nslookup; then
+        # busybox nslookup doesn't have -class
+        if ! _res=$(nslookup -type="$_type" "$_name" "$_server"); then
+            log error "Failed to get public IP using $_finder"
+            return 1
+        fi
+
+        if [ -z "$_res" ]; then
+            log error "Failed to get public IP using $_finder"
+            return 1
+        fi
+
+        _res2=$(printf "%s\n" "$_res" \
+            | awk '/Address:/ && /[0-9.]/ && !/#/ && $2 !~ /:/ { print $2 }')
+
+        # see if we're dealing with windows nslookup here
+        if command -v nslookup 2>&1 | grep -q -i 'windows/system32'; then
+            # windows nslookup output formatting differs from bind9-dnsutils
+            _res2=$(printf "%s\n" "$_res" | awk -F '"' 'NF > 1 {print $2}')
+            if [ -z "$_res2" ]; then
+                _res2=$(printf "%s\n" "$_res" \
+                    | awk -F ' = ' '/address/ {print $2}')
+            fi
+            [ -z "$_res2" ] && return 1
+        fi
+
+        printf "%s\n" "$_res2"
+    else
+        check_deps_any dig nslookup host > /dev/null
+        log error "Failed to get public IP using $_finder"
+        return 1
+    fi
+}
+
 get_ip_by_dns_cloudflare() {
+    _finder="dns-cloudflare"
     if [ "$ipv6_flag" -eq 1 ]; then
         _server="2606:4700:4700::1001"
     else
@@ -444,8 +537,7 @@ get_ip_by_dns_cloudflare() {
         "whoami.cloudflare" \
         "$_server" \
         "TXT" \
-        "$_chaos" \
-        "0"); then
+        "$_chaos"); then
         return 1
     fi
     if [ -n "$_res" ]; then
@@ -509,8 +601,7 @@ get_public_ip() {
                 "o-o.myaddr.l.google.com" \
                 "ns1.google.com" \
                 "TXT" \
-                "IN" \
-                "0"
+                "IN"
             ;;
         "dns-cloudflare")
             get_ip_by_dns_cloudflare
@@ -520,16 +611,10 @@ get_public_ip() {
                 "ip" \
                 "dns.toys" \
                 "TXT" \
-                "IN" \
-                "0"
+                "IN"
             ;;
         "dns-akamai")
-            get_ip_by_dns "$1" \
-                "whoami.akamai.net" \
-                "ns1-1.akamaitech.net" \
-                "ANY" \
-                "IN" \
-                "1"
+            get_ip_by_dns_akamai
             ;;
         *)
             log error "Unsupported finder method: $1"
@@ -811,7 +896,7 @@ handle_cmd() {
                 ;;
             4)
                 # default, declared for consistency
-                ipv6_flag=""
+                ipv6_flag=0
                 ;;
             6)
                 ipv6_flag=1
