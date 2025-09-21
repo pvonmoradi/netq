@@ -137,23 +137,25 @@ fetch() {
     if ! downloader=$(check_deps_any curl wget); then
         return 1
     fi
-
+    _timeout=10 # seconds
     case $downloader in
         curl)
-            if ! curl --silent --show-error --fail -"$_network" "$1"; then
+            if ! curl --silent --show-error --fail -"$_network" \
+                --max-time "$_timeout" "$1"; then
                 return 1
             fi
             ;;
         wget)
             # check if this is busybox
             if wget -V 2>&1 | grep -q -i 'busybox'; then
-                if ! wget -q -O- "$1"; then
+                if ! wget -q -T "$_timeout" -O- "$1"; then
                     return 1
                 fi
                 return
             fi
 
-            if ! wget --quiet -"$_network" -O- "$1"; then
+            if ! wget --quiet -"$_network" --timeout="$_timeout" \
+                -O- "$1"; then
                 return 1
             fi
             ;;
