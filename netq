@@ -10,9 +10,9 @@
 # Dependencies: ip | ifconfig | hostname | nmcli
 #               curl | wget
 #               dig | host | nslookup
-#               jq, ping, awk, bc, date, grep, tr
+#               jq, ping, awk, bc, date, grep, tr, uname
 
-version=0.26
+version=0.27
 log_debug_flag=""
 log_quiet_flag=""
 ipv6_flag=0
@@ -93,6 +93,7 @@ log() {
 
 check_deps() {
     OPTIND=1
+    _silent=""
     while getopts q opt; do
         case $opt in
             q)
@@ -240,9 +241,21 @@ show_local_ip() {
                       /^[a-zA-Z]/ {interface=$1; sub(/:$/, "", interface)}
                       /inet [0-9]/ {print $2 sep interface}')
         fi
-
+    # hostname -I
     elif result=$(hostname -I 2> /dev/null); then
         result="$(printf "%s" "$result" | tr ' ' '\n')"
+
+    # handle windows/msys2 case
+    elif uname -a | grep -q -i 'mingw'; then
+        check_deps netsh || return 1
+        result=$(netsh interface ip show addresses \
+            | awk -v sep="$l_sep" 'BEGIN {RS = ""} {
+               if (match($0, /"([^"]*)"/)) {
+                 interface = substr($0, RSTART+1, RLENGTH-2);
+                 match($0, /IP Address:[ \t]+([0-9.]+)/, addr);
+                 if (length(addr) > 1) print addr[1] sep interface
+                 }
+               }')
     fi
 
     if [ -n "$result" ]; then
@@ -362,16 +375,28 @@ get_ip_by_dns() {
         [ -z "$_res" ] && return 1
 
         if [ "$_raw" -eq 0 ]; then
-            _res=$(printf "%s\n" "$_res" | awk -F '"' '/text/ {print $2}')
+            _res2=$(printf "%s\n" "$_res" | awk -F '"' '/text/ {print $2}')
         else
-            _res=$(printf "%s\n" "$_res")
+            _res2=$(printf "%s\n" "$_res")
         fi
+
+        # see if we're dealing with windows nslookup here
+        if command -v nslookup 2>&1 | grep -q -i 'windows/system32'; then
+            # windows nslookup output formatting differs from bind9-dnsutils
+            _res2=$(printf "%s\n" "$_res" | awk -F '"' 'NF > 1 {print $2}')
+            if [ -z "$_res2" ]; then
+                _res2=$(printf "%s\n" "$_res" \
+                    | awk -F ' = ' '/address/ {print $2}')
+            fi
+            [ -z "$_res2" ] && return 1
+        fi
+
         # since there is no -6 switch here, we should manually check if the
         # received ip is v4 or v6
-        if printf "%s" "$_res" | grep -i -q ':'; then
+        if printf "%s" "$_res2" | grep -i -q ':'; then
             # ipv6
             if [ "$_network" -eq "6" ]; then
-                printf "%s\n" "$_res"
+                printf "%s\n" "$_res2"
             else
                 return 1
             fi
@@ -380,7 +405,7 @@ get_ip_by_dns() {
             if [ "$_network" -eq "6" ]; then
                 return 1
             else
-                printf "%s\n" "$_res"
+                printf "%s\n" "$_res2"
             fi
         fi
     else
@@ -396,11 +421,19 @@ get_ip_by_dns_cloudflare() {
     else
         _server="1.0.0.1"
     fi
+
+    _chaos="CH"
+    # handle special case of windows nslookup
+    if command -v nslookup 2>&1 | grep -q -i 'windows/system32'; then
+        # unlike bind9-dnsutils, windows implementation knows "CHAOS"
+        _chaos="CHAOS"
+    fi
+
     if ! _res=$(get_ip_by_dns "dns-cloudflare" \
         "whoami.cloudflare" \
         "$_server" \
         "TXT" \
-        "CH" \
+        "$_chaos" \
         "0"); then
         return 1
     fi
@@ -600,8 +633,14 @@ list_interfaces() {
         else
             ip -4 -brief address
         fi
-    else
+
+    elif [ -e /sys/class/net ]; then
         ls /sys/class/net
+
+    # handle windows/msys2 case
+    elif uname -a | grep -q -i 'mingw'; then
+        check_deps netsh || return 1
+        netsh interface ip show addresses
     fi
 }
 
