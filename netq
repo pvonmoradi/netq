@@ -12,7 +12,7 @@
 #               dig | host | nslookup
 #               jq, ping, awk, bc, date, grep, tr, uname
 
-version=0.32
+version=0.33
 l_sep="@" # separator between local IP and device/SSID name
 p_sep="•" # separator between public IP and country
 # default query priority, move up the desired line to prioritize
@@ -418,26 +418,7 @@ get_ip_by_dns() {
             fi
             [ -z "$_res2" ] && return 1
         fi
-
-        # since there is no -6 switch here, we should manually check if the
-        # received ip is v4 or v6
-        if printf "%s" "$_res2" | grep -i -q ':'; then
-            # ipv6
-            if [ "$_network" -eq "6" ]; then
-                printf "%s\n" "$_res2"
-            else
-                log error "Failed to get public IP using $_finder"
-                return 1
-            fi
-        else
-            # ipv4
-            if [ "$_network" -eq "6" ]; then
-                log error "Failed to get public IP using $_finder"
-                return 1
-            else
-                printf "%s\n" "$_res2"
-            fi
-        fi
+        printf "%s\n" "$_res2"
     else
         check_deps_any dig nslookup host > /dev/null
         log error "Failed to get public IP using $_finder"
@@ -623,11 +604,38 @@ get_public_ip() {
     esac
 }
 
+# sanitization is needed since 'busybox wget' and 'nslookup' can't enforce
+# connection through v4 or v6 networks
+get_public_ip_santinized() {
+    finder="$1"
+    if ! result=$(get_public_ip "$finder"); then
+        return 1
+    fi
+    # ensure whether the found IP is v4 or v6
+    if printf "%s" "$result" | grep -i -q ':'; then
+        # ipv6
+        if [ "$ipv6_flag" -eq 1 ]; then
+            printf "%s\n" "$result"
+        else
+            log error "Failed to get public IPv4 using $finder. Found $result"
+            return 1
+        fi
+    else
+        # ipv4
+        if [ "$ipv6_flag" -eq 1 ]; then
+            log error "Failed to get public IPv6 using $finder. Found $result"
+            return 1
+        else
+            printf "%s\n" "$result"
+        fi
+    fi
+}
+
 show_public_ip() {
     is_found=0
     for finder in $finders; do
         log debug "Trying fetching public IP using $finder"
-        if get_public_ip "$finder"; then
+        if get_public_ip_santinized "$finder"; then
             is_found=1
             log debug "Successfully found public IP using $finder"
             break
