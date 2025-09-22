@@ -51,7 +51,7 @@ table above.
 - `dig | host | nslookup` : for DNS requests _[public]_
 - `ping` : for pinging remote IP _[check]_
 - `awk bc date grep tr uname`
-- `netsh` : required in Windows/MSYS2 _[local, list]_
+- `netsh netstat` : only required in Windows/MSYS2 _[local, list, bandwidth]_
 
 
 # Usage

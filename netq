@@ -12,7 +12,7 @@
 #               dig | host | nslookup
 #               jq, ping, awk, bc, date, grep, tr, uname
 
-version=0.31
+version=0.32
 l_sep="@" # separator between local IP and device/SSID name
 p_sep="•" # separator between public IP and country
 # default query priority, move up the desired line to prioritize
@@ -732,81 +732,61 @@ list_interfaces() {
     # handle windows/msys2 case
     elif uname -a | grep -q -i 'mingw'; then
         check_deps netsh || return 1
-        netsh interface ip show addresses
+        if [ "$ipv6_flag" -eq 1 ]; then
+            netsh interface ipv6 show addresses
+        else
+            netsh interface ip show addresses
+        fi
     fi
 }
 
-watch_bandwidth() {
-    OPTIND=1
-    while getopts h opt; do
-        case $opt in
-            h)
-                show_help
-                exit
-                ;;
-            *)
-                log error "Bad usage! Check help (-h)"
-                exit 2
-                ;;
-        esac
-    done
-    shift "$((OPTIND - 1))"
-
-    dev=$1
-    if [ -z "$dev" ]; then
-        log error "Bad usage! No interface was passed. Run 'netq list'"
-        return 2
+# unit conversion
+# in this function, Tx/Rx is limited to integers
+format_val_sh() {
+    diff_val="$1"
+    fmt_val=""
+    if [ "$diff_val" -lt 1024 ]; then
+        # we are in Bytes range
+        fmt_val="$diff_val"
+        fmt_val=$(printf "%4d B" "$fmt_val")
+    elif [ "$diff_val" -ge 1024 ] \
+        && [ "$diff_val" -lt 1048576 ]; then
+        # we are in KibiBytes range
+        fmt_val=$((diff_val >> 10))
+        fmt_val=$(printf "%4d K" "$fmt_val")
+    else
+        # we are in MebiBytes range
+        fmt_val=$((diff_val >> 20))
+        fmt_val=$(printf "%4d M" "$fmt_val")
     fi
-    if ! grep -q "$dev:" /proc/net/dev; then
-        log error "No such interface: '$dev'. Run 'netq list'"
-        return 1
-    fi
+    printf "%s" "$fmt_val"
+}
 
+# this function uses bc only in MiB range
+format_val_bc() {
+    diff_val="$1"
+    fmt_val=""
+    if [ "$diff_val" -lt 1024 ]; then
+        # we are in Bytes range
+        fmt_val="$diff_val"
+        fmt_val=$(printf "%6d B" "$fmt_val")
+    elif [ "$diff_val" -ge 1024 ] \
+        && [ "$diff_val" -lt 1048576 ]; then
+        # we are in KibiBytes range
+        fmt_val=$((diff_val >> 10))
+        fmt_val=$(printf "%6d K" "$fmt_val")
+    else
+        # we are in MebiBytes range
+        fmt_val=$(printf "scale=1; %s / (1024 * 1024)\n" "$diff_val" | bc)
+        fmt_val=$(printf "%6.1f M" "$fmt_val")
+    fi
+    printf "%s" "$fmt_val"
+}
+
+watch_bw_linux_direct() {
+    dev="$1"
     read -r rx < "/sys/class/net/$dev/statistics/rx_bytes"
     read -r tx < "/sys/class/net/$dev/statistics/tx_bytes"
-
-    # unit conversion
-    # in this function, Tx/Rx is limited to integers
-    format_val_sh() {
-        diff_val="$1"
-        fmt_val=""
-        if [ "$diff_val" -lt 1024 ]; then
-            # we are in Bytes range
-            fmt_val="$diff_val"
-            fmt_val=$(printf "%4d B" "$fmt_val")
-        elif [ "$diff_val" -ge 1024 ] \
-            && [ "$diff_val" -lt 1048576 ]; then
-            # we are in KibiBytes range
-            fmt_val=$((diff_val >> 10))
-            fmt_val=$(printf "%4d K" "$fmt_val")
-        else
-            # we are in MebiBytes range
-            fmt_val=$((diff_val >> 20))
-            fmt_val=$(printf "%4d M" "$fmt_val")
-        fi
-        printf "%s" "$fmt_val"
-    }
-
-    # this function uses bc only in MiB range
-    format_val_bc() {
-        diff_val="$1"
-        fmt_val=""
-        if [ "$diff_val" -lt 1024 ]; then
-            # we are in Bytes range
-            fmt_val="$diff_val"
-            fmt_val=$(printf "%6d B" "$fmt_val")
-        elif [ "$diff_val" -ge 1024 ] \
-            && [ "$diff_val" -lt 1048576 ]; then
-            # we are in KibiBytes range
-            fmt_val=$((diff_val >> 10))
-            fmt_val=$(printf "%6d K" "$fmt_val")
-        else
-            # we are in MebiBytes range
-            fmt_val=$(printf "scale=1; %s / (1024 * 1024)\n" "$diff_val" | bc)
-            fmt_val=$(printf "%6.1f M" "$fmt_val")
-        fi
-        printf "%s" "$fmt_val"
-    }
 
     # delay for 0.5 sec which result in sampling frequency to be 2 Hz
     while sleep 0.5; do
@@ -829,6 +809,70 @@ watch_bandwidth() {
         rx=$newrx
         tx=$newtx
     done
+}
+
+watch_bw_win_netstat() {
+    read -r rx tx << EOF
+$(netstat -e | awk '/Bytes/{print $2, $3}')
+EOF
+    # delay for 1 sec which result in sampling frequency to be 1 Hz
+    while sleep 1; do
+        # raw bytes
+        read -r newrx newtx << EOF
+$(netstat -e | awk '/Bytes/{print $2, $3}')
+EOF
+        # raw bytes
+        # multplication by f = 1/delay = 1 Hz
+        diff_rx=$((newrx - rx))
+        diff_tx=$((newtx - tx))
+
+        # formatted values
+        fmt_diff_rx=$(format_val_bc "$diff_rx")
+        fmt_diff_tx=$(format_val_bc "$diff_tx")
+        # printing the final result
+        printf "↓%s • ↑%s\t\r" "$fmt_diff_rx" "$fmt_diff_tx"
+
+        # updating the values
+        rx=$newrx
+        tx=$newtx
+    done
+}
+
+watch_bandwidth() {
+    OPTIND=1
+    while getopts h opt; do
+        case $opt in
+            h)
+                show_help
+                exit
+                ;;
+            *)
+                log error "Bad usage! Check help (-h)"
+                exit 2
+                ;;
+        esac
+    done
+    shift "$((OPTIND - 1))"
+
+    dev=$1
+    if uname -a | grep -q -i 'linux'; then
+        if [ -z "$dev" ]; then
+            log error "Bad usage! No interface was passed. Run 'netq list'"
+            return 2
+        fi
+        if ! grep -q "$dev:" /proc/net/dev; then
+            log error "No such interface: '$dev'. Run 'netq list'"
+            return 1
+        fi
+        watch_bw_linux_direct "$dev"
+    elif uname -a | grep -q -i 'mingw'; then
+        # handle windows/msys2
+        check_deps netstat || return 1
+        watch_bw_win_netstat
+    else
+        log error "Unsupported platform"
+        return 1
+    fi
 }
 
 handle_check_cmd() {
