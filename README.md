@@ -38,8 +38,17 @@ the availabilty of dependencies on host OS or the capabilities of remote APIs.
 | [dns-toys](https://www.dns.toys/)                           | ×            | (dig\|host\|nslookup)+awk |                  |
 | dns-akamai                                                  | ×            | (dig\|host\|nslookup)+awk |                  |
 
+## Installation
+```
+wget https://github.com/pvonmoradi/netq/raw/refs/heads/master/netq -O ~/bin/netq
+# or
+wget https://github.com/pvonmoradi/netq/raw/refs/heads/master/netq -O /usr/local/bin/netq
+```
 
 ## Dependencies
+The script is expected to just work on typical GNU/Linux systems, without
+needing to install non-default tools.
+
 The following lists `netq` dependencies and the _[command]_ they are used in. Not
 all of these tools are required. The | between entries means existence of one
 tool is enough. Not all public IP finders need every _[public]_ tool. Refer to the
