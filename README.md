@@ -63,6 +63,7 @@ Usage: netq [OPTIONS] COMMAND [OPTIONS] ARGS
     netq public -l              : List public IP finder methods
     netq public "FINDERS_CSV"   : Print public IP using passed finders
     netq public -e EXCL_REGEX   : Print public IP using filtered (BRE) finders
+    netq public -r              : Print raw response from public IP finder
     netq bandwidth INTERFACE    : Watch bandwidth usage of INTERFACE
     netq check                  : Check internet connectivity
     netq check URL              : Check whether URL can be downloaded
@@ -70,6 +71,7 @@ Usage: netq [OPTIONS] COMMAND [OPTIONS] ARGS
     netq list                   : List interfaces
     netq help                   : Show help
 Options:
+    -4: IPv4 mode (default)
     -6: IPv6 mode
     -q: Suppress all logs even errors
     -v: Enable debug logs
@@ -103,6 +105,10 @@ Command aliases:
   in the specified priority (note CSV format). The `-e` switch in this case
   would act on the passed finders. The global `-v` switch enables debug logs
   
+- `netq p -r "ip-api.com"` : Print the raw response of the remote API without
+  any postprocessing. Useful for manually extracting parameters other than IP or
+  country. Output varies depending on finder services
+
 - `netq -6 p` : Print public IPv6 of the machine
   
 - `netq ls` : List available interfaces
@@ -127,32 +133,31 @@ Command aliases:
 For public IP finding, naturally, DNS-based methods (UDP) are faster than
 HTTP-based ones. What follows is a rough benchmark of supported public IP
 finders (note that different finders use different post-processing tools hence
-this is not accurate but I believe the network latency is the main bottleneck
-here):
+`-r` is used in this benchmark. Anyway, I believe network latency is the main
+bottleneck here):
 
 ```shell
-netq p -l | awk '{print "netq p "  $1}' | sed "s/.*/'&'/" | paste -sd' ' \
-| xargs hyperfine -r3 --sort mean-time --export-markdown \
+netq p -l | awk '{print "netq p -r "  $1}' | sed "s/.*/'&'/" | paste -sd' ' \
+| xargs hyperfine -r3 -N --sort mean-time --export-markdown \
 /tmp/netq-"v$(netq -V)".md
 ```
 
-| Command                             |     Mean [ms] | Min [ms] | Max [ms] |     Relative |
-|:------------------------------------|--------------:|---------:|---------:|-------------:|
-| `netq p dns-cloudflare`             |    20.8 ± 1.3 |     19.4 |     21.6 |         1.00 |
-| `netq p dns-akamai`                 |    34.9 ± 0.7 |     34.1 |     35.6 |  1.68 ± 0.11 |
-| `netq p dns-google`                 |   74.3 ± 51.8 |     43.8 |    134.1 |  3.57 ± 2.50 |
-| `netq p ifconfig.co`                |    84.4 ± 6.9 |     77.2 |     90.9 |  4.05 ± 0.41 |
-| `netq p bare-icanhazip.com`         |    85.1 ± 1.3 |     83.8 |     86.3 |  4.09 ± 0.26 |
-| `netq p cloudflare.com`             |  101.0 ± 36.2 |     76.1 |    142.5 |  4.85 ± 1.76 |
-| `netq p ip-api.com`                 |  110.4 ± 54.2 |     55.3 |    163.7 |  5.30 ± 2.63 |
-| `netq p bare-checkip.amazonaws.com` |   134.4 ± 2.9 |    131.2 |    137.0 |  6.46 ± 0.42 |
-| `netq p bare-api.ipify.org`         |   161.2 ± 6.9 |    155.3 |    168.8 |  7.74 ± 0.58 |
-| `netq p ifconfig.io`                |  167.4 ± 11.3 |    154.9 |    177.0 |  8.04 ± 0.73 |
-| `netq p dns-toys`                   | 187.3 ± 110.7 |    109.7 |    314.0 |  9.00 ± 5.34 |
-| `netq p ip.network`                 |  193.9 ± 53.0 |    158.1 |    254.7 |  9.31 ± 2.61 |
-| `netq p bare-ifconfig.me`           | 341.7 ± 185.7 |    160.7 |    531.7 | 16.41 ± 8.98 |
-| `netq p ipinfo.io`                  | 365.1 ± 128.7 |    216.5 |    440.6 | 17.54 ± 6.27 |
-
+| Command                                |    Mean [ms] | Min [ms] | Max [ms] |    Relative |
+|:---------------------------------------|-------------:|---------:|---------:|------------:|
+| `netq p -r dns-cloudflare`             |   39.2 ± 3.2 |     36.8 |     42.9 |        1.00 |
+| `netq p -r dns-google`                 |   46.9 ± 6.3 |     43.1 |     54.2 | 1.19 ± 0.19 |
+| `netq p -r ip-api.com`                 |   50.5 ± 2.7 |     48.0 |     53.4 | 1.29 ± 0.13 |
+| `netq p -r cloudflare.com`             |   65.7 ± 9.6 |     58.1 |     76.4 | 1.67 ± 0.28 |
+| `netq p -r bare-icanhazip.com`         |  79.6 ± 19.2 |     61.2 |     99.5 | 2.03 ± 0.52 |
+| `netq p -r ifconfig.co`                |   92.0 ± 9.8 |     81.7 |    101.3 | 2.34 ± 0.32 |
+| `netq p -r dns-akamai`                 |  107.6 ± 2.5 |    105.4 |    110.3 | 2.74 ± 0.23 |
+| `netq p -r bare-checkip.amazonaws.com` |  115.0 ± 2.9 |    112.6 |    118.3 | 2.93 ± 0.25 |
+| `netq p -r ip.network`                 | 130.5 ± 17.2 |    110.7 |    142.0 | 3.33 ± 0.52 |
+| `netq p -r bare-ifconfig.me`           |  146.7 ± 1.6 |    144.9 |    147.7 | 3.74 ± 0.31 |
+| `netq p -r ifconfig.io`                | 150.3 ± 10.7 |    142.4 |    162.5 | 3.83 ± 0.42 |
+| `netq p -r bare-api.ipify.org`         | 161.3 ± 10.7 |    150.9 |    172.2 | 4.11 ± 0.43 |
+| `netq p -r dns-toys`                   | 161.6 ± 79.7 |    103.1 |    252.4 | 4.12 ± 2.06 |
+| `netq p -r ipinfo.io`                  | 183.2 ± 44.0 |    155.1 |    234.0 | 4.67 ± 1.19 |
 
 # Development
 - linter: `shellcheck`
