@@ -30,7 +30,7 @@ the availabilty of dependencies on host OS or the capabilities of remote APIs.
 | [ip-api.com](https://ip-api.com)                            | ✓            | (curl\|wget)+awk          | Plain HTTP       |
 | [ipstack.com](https://ipstack.com)                          | ✓            | (curl\|wget)+jq           | Requires API_KEY |
 | [bare-checkip.amazonaws.com](https://checkip.amazonaws.com) | ×            | (curl\|wget)              |                  |
-| [bare-api.ipify.org](https://api.ipify.org)                 | ×            | (curl\|wget)              |                  |
+| [bare-ipify.org](https://ipify.org)                         | ×            | (curl\|wget)              |                  |
 | [bare-ifconfig.me](https://ifconfig.me)                     | ×            | (curl\|wget)              |                  |
 | [bare-icanhazip.com](https://icanhazip.com)                 | ×            | (curl\|wget)              |                  |
 | dns-google                                                  | ×            | (dig\|host\|nslookup)+awk |                  |

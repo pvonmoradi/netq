@@ -12,7 +12,7 @@
 #               dig | host | nslookup
 #               jq, ping, awk, bc, date, grep, tr, uname
 
-version=0.35
+version=0.36
 l_sep="@" # separator between local IP and device/SSID name
 p_sep="•" # separator between public IP and country
 # default query priority, move up the desired line to prioritize
@@ -25,7 +25,7 @@ ifconfig.io
 ifconfig.co
 ip-api.com
 bare-checkip.amazonaws.com
-bare-api.ipify.org
+bare-ipify.org
 bare-ifconfig.me
 bare-icanhazip.com
 dns-google
@@ -610,9 +610,9 @@ get_public_ip() {
         "ip-api.com")
             get_ip_by_query_text_ip_api
             ;;
-        "bare-api.ipify.org")
+        "bare-ipify.org")
             get_ip_by_query_text "$1" \
-                "https://api.ipify.org"
+                "https://api64.ipify.org"
             ;;
         "bare-ifconfig.me")
             get_ip_by_query_text "$1" \
