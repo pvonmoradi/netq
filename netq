@@ -12,7 +12,7 @@
 #               dig | host | nslookup
 #               jq, ping, awk, bc, date, grep, tr, uname
 
-version=0.34
+version=0.35
 l_sep="@" # separator between local IP and device/SSID name
 p_sep="•" # separator between public IP and country
 # default query priority, move up the desired line to prioritize
@@ -1022,7 +1022,6 @@ handle_cmd() {
 
     case $1 in
         "local" | "l" | "")
-            shift
             show_local_ip || return 1
             ;;
         "public" | "p")
