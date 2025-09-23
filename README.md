@@ -20,26 +20,26 @@ the availabilty of dependencies on host OS or the capabilities of remote APIs.
 - Supports IPv4 and IPv6
 
 ## Supported IP-finder services
-| Finder                                                      | country_code | Dependencies              | Notes            |
-|:------------------------------------------------------------|:------------:|:-------------------------:|:----------------:|
-| [cloudflare.com](https://cloudflare.com/cdn-cgi/trace)      | ✓            | (curl\|wget)+awk          |                  |
-| [ipinfo.io](https://ipinfo.io)                              | ✓            | (curl\|wget)+jq           |                  |
-| [ip.network](https://ip.network)                            | ✓            | (curl\|wget)+jq           |                  |
-| [ifconfig.io](https://ifconfig.io)                          | ✓            | (curl\|wget)+jq           |                  |
-| [ifconfig.co](https://ifconfig.co)                          | ✓            | (curl\|wget)+jq           |                  |
-| [ip-api.com](https://ip-api.com)                            | ✓            | (curl\|wget)+awk          | Plain HTTP       |
-| [ipstack.com](https://ipstack.com)                          | ✓            | (curl\|wget)+jq           | Requires API_KEY |
-| [bare-checkip.amazonaws.com](https://checkip.amazonaws.com) | ×            | (curl\|wget)              |                  |
-| [bare-ipify.org](https://ipify.org)                         | ×            | (curl\|wget)              |                  |
-| [bare-ifconfig.me](https://ifconfig.me)                     | ×            | (curl\|wget)              |                  |
-| [bare-icanhazip.com](https://icanhazip.com)                 | ×            | (curl\|wget)              |                  |
-| dns-google                                                  | ×            | (dig\|host\|nslookup)+awk |                  |
-| dns-cloudflare                                              | ×            | (dig\|host\|nslookup)+awk |                  |
-| [dns-toys](https://www.dns.toys/)                           | ×            | (dig\|host\|nslookup)+awk |                  |
-| dns-akamai                                                  | ×            | (dig\|host\|nslookup)+awk |                  |
+| Finder                                                      | Country | IPv6 | Dependencies              | Notes            |
+|:------------------------------------------------------------|:-------:|:----:|:-------------------------:|:----------------:|
+| [cloudflare.com](https://cloudflare.com/cdn-cgi/trace)      | ✓       | ✓    | (curl\|wget)+awk          |                  |
+| [ipinfo.io](https://ipinfo.io)                              | ✓       | ✓    | (curl\|wget)+jq           |                  |
+| [ip.network](https://ip.network)                            | ✓       | ✓    | (curl\|wget)+jq           |                  |
+| [ifconfig.io](https://ifconfig.io)                          | ✓       | ✓    | (curl\|wget)+jq           |                  |
+| [ifconfig.co](https://ifconfig.co)                          | ✓       | ✓    | (curl\|wget)+jq           |                  |
+| [ip-api.com](https://ip-api.com)                            | ✓       | ×    | (curl\|wget)+awk          | Plain HTTP       |
+| [ipstack.com](https://ipstack.com)                          | ✓       | ×    | (curl\|wget)+jq           | Requires API_KEY |
+| [bare-checkip.amazonaws.com](https://checkip.amazonaws.com) | ×       | ×    | (curl\|wget)              |                  |
+| [bare-ipify.org](https://ipify.org)                         | ×       | ✓    | (curl\|wget)              |                  |
+| [bare-ifconfig.me](https://ifconfig.me)                     | ×       | ✓    | (curl\|wget)              |                  |
+| [bare-icanhazip.com](https://icanhazip.com)                 | ×       | ✓    | (curl\|wget)              |                  |
+| dns-google                                                  | ×       | ✓    | (dig\|host\|nslookup)+awk |                  |
+| dns-cloudflare                                              | ×       | ✓    | (dig\|host\|nslookup)+awk |                  |
+| [dns-toys](https://www.dns.toys/)                           | ×       | ✓    | (dig\|host\|nslookup)+awk |                  |
+| dns-akamai                                                  | ×       | ×    | (dig\|host\|nslookup)+awk |                  |
 
 ## Installation
-```
+```shell
 wget https://github.com/pvonmoradi/netq/raw/refs/heads/master/netq -O ~/bin/netq
 # or
 wget https://github.com/pvonmoradi/netq/raw/refs/heads/master/netq -O /usr/local/bin/netq
@@ -151,22 +151,22 @@ netq p -l | awk '{print "netq p -r "  $1}' | sed "s/.*/'&'/" | paste -sd' ' \
 /tmp/netq-"v$(netq -V)".md
 ```
 
-| Command                                |    Mean [ms] | Min [ms] | Max [ms] |    Relative |
-|:---------------------------------------|-------------:|---------:|---------:|------------:|
-| `netq p -r dns-cloudflare`             |   39.2 ± 3.2 |     36.8 |     42.9 |        1.00 |
-| `netq p -r dns-google`                 |   46.9 ± 6.3 |     43.1 |     54.2 | 1.19 ± 0.19 |
-| `netq p -r ip-api.com`                 |   50.5 ± 2.7 |     48.0 |     53.4 | 1.29 ± 0.13 |
-| `netq p -r cloudflare.com`             |   65.7 ± 9.6 |     58.1 |     76.4 | 1.67 ± 0.28 |
-| `netq p -r bare-icanhazip.com`         |  79.6 ± 19.2 |     61.2 |     99.5 | 2.03 ± 0.52 |
-| `netq p -r ifconfig.co`                |   92.0 ± 9.8 |     81.7 |    101.3 | 2.34 ± 0.32 |
-| `netq p -r dns-akamai`                 |  107.6 ± 2.5 |    105.4 |    110.3 | 2.74 ± 0.23 |
-| `netq p -r bare-checkip.amazonaws.com` |  115.0 ± 2.9 |    112.6 |    118.3 | 2.93 ± 0.25 |
-| `netq p -r ip.network`                 | 130.5 ± 17.2 |    110.7 |    142.0 | 3.33 ± 0.52 |
-| `netq p -r bare-ifconfig.me`           |  146.7 ± 1.6 |    144.9 |    147.7 | 3.74 ± 0.31 |
-| `netq p -r ifconfig.io`                | 150.3 ± 10.7 |    142.4 |    162.5 | 3.83 ± 0.42 |
-| `netq p -r bare-api.ipify.org`         | 161.3 ± 10.7 |    150.9 |    172.2 | 4.11 ± 0.43 |
-| `netq p -r dns-toys`                   | 161.6 ± 79.7 |    103.1 |    252.4 | 4.12 ± 2.06 |
-| `netq p -r ipinfo.io`                  | 183.2 ± 44.0 |    155.1 |    234.0 | 4.67 ± 1.19 |
+| Command                                |    Mean [ms] | Min [ms] | Max [ms] |     Relative |
+|:---------------------------------------|-------------:|---------:|---------:|-------------:|
+| `netq p -r dns-cloudflare`             |   38.6 ± 4.9 |     33.5 |     43.2 |         1.00 |
+| `netq p -r dns-google`                 |   45.2 ± 6.5 |     41.3 |     52.6 |  1.17 ± 0.22 |
+| `netq p -r ip-api.com`                 |   54.1 ± 3.4 |     50.5 |     57.2 |  1.40 ± 0.20 |
+| `netq p -r cloudflare.com`             |   62.3 ± 9.7 |     51.2 |     69.5 |  1.61 ± 0.32 |
+| `netq p -r bare-icanhazip.com`         |  84.5 ± 15.1 |     68.8 |     98.9 |  2.19 ± 0.48 |
+| `netq p -r ifconfig.co`                |   89.2 ± 9.7 |     78.1 |     95.1 |  2.31 ± 0.38 |
+| `netq p -r bare-checkip.amazonaws.com` |  96.6 ± 20.6 |     81.8 |    120.1 |  2.50 ± 0.62 |
+| `netq p -r dns-akamai`                 |  107.7 ± 3.0 |    104.3 |    109.7 |  2.79 ± 0.36 |
+| `netq p -r dns-toys`                   | 132.8 ± 20.0 |    109.9 |    146.2 |  3.44 ± 0.68 |
+| `netq p -r ifconfig.io`                |  160.7 ± 6.7 |    154.7 |    167.9 |  4.16 ± 0.55 |
+| `netq p -r bare-ifconfig.me`           | 165.9 ± 34.7 |    145.9 |    206.0 |  4.30 ± 1.05 |
+| `netq p -r ip.network`                 | 166.6 ± 21.6 |    146.3 |    189.4 |  4.32 ± 0.78 |
+| `netq p -r ipinfo.io`                  | 167.6 ± 16.3 |    148.8 |    178.1 |  4.34 ± 0.69 |
+| `netq p -r bare-ipify.org`             | 433.6 ± 24.1 |    407.7 |    455.2 | 11.23 ± 1.55 |
 
 # Development
 - linter: `shellcheck`
