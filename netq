@@ -87,6 +87,9 @@ log() {
         "debug")
             _mode="debug"
             ;;
+        *)
+            _mode="debug"
+            ;;
     esac
     # skip debug logs if flag is not set
     if [ $_mode = "debug" ] && [ -z "$log_debug_flag" ]; then
