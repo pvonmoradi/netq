@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# Author: Pooya Moradi
+# Date: 2022-04-20 | 1401-01-31
+# License: MIT
+#
+# Description: A wrapper over netq utilizing notify-send and yad to show Rx/Tx
+#              for a network interface.
+# Dependencies: netq notify-send
+#               yad (optional)
+
+# enforce run of only a single instance of the script
+lockdir="${TMPDIR:-/tmp}/bandwidth-monitor.lock"
+if ! mkdir -- "$lockdir"; then
+    printf >&2 "[ERROR] another instance is running.\n"
+    exit 1
+fi
+
+show_help() {
+    cat << EOF
+Usage: bandwidth-monitor [-i INTERFACE] [-t TIMEOUT_SECONDS]
+                         [-n] [-y] [-h]
+DESCRIPTION
+    Monitors Rx/Tx of a network interface for a period of time and presents its
+    info using notify-send and yad
+
+OPTIONS
+    [-i INTERFACE] : interface to monitor
+        Timeout in seconds
+        Default: wlp3s0
+    [-t TIMEOUT_SECONDS] : timeout
+        Timeout in seconds
+        Default: 30
+    [-n] : use notify-send
+        Present information via notify-send
+    [-y] : use yad
+        Present information via yad
+    [-h] : help
+        Display the help message
+
+NOTES
+
+EXAMPLES
+    # monitor bandwidth for eth0, via notify-send and yad, with a 10s timeout
+    bandwidth-monitor -i 'eth0' -ny -t 10
+EOF
+}
+
+cleanup() {
+    if [[ -e /dev/fd/3 ]]; then
+        printf "quit\n" >&3
+        exec >&3-
+    fi
+    rm -rf -- "$lockdir"
+    trap '' SIGTERM
+    pkill -P $$
+}
+
+check_deps() {
+    local err=0
+    for app in "$@"; do
+        if ! command -v "$app" &> /dev/null; then
+            printf >&2 "[ERROR] dependency '%s' not found.\n" "$app"
+            err=1
+        fi
+    done
+    return "$err"
+}
+
+trap "cleanup" EXIT
+timeout="30"
+use_notify=0
+use_yad=0
+interface='wlp3s0'
+
+while getopts t:i:nyh opt; do
+    case $opt in
+        h)
+            show_help
+            exit 0
+            ;;
+        n)
+            use_notify=1
+            ;;
+        y)
+            use_yad=1
+            ;;
+        t)
+            timeout="$OPTARG"
+            ;;
+        i)
+            interface="$OPTARG"
+            ;;
+        *)
+            printf >&2 "[ERROR] Bad usage!\n"
+            show_help >&2
+            exit 2
+            ;;
+    esac
+done
+shift "$((OPTIND - 1))"
+
+# check dependencies
+check_deps netq || exit 1
+if ((use_notify)); then
+    check_deps notify-send || exit 1
+fi
+if ((use_yad)); then
+    check_deps yad || exit 1
+fi
+
+# start yad notification tray
+if ((use_yad)); then
+    exec 3> >(yad --notification --no-middle --listen \
+        --image="mail-send-receive" --text="bandwidth-monitor")
+    printf "%s|\n" \
+        "menu:Quit!sh -c 'kill $$'!application-exit" \
+        >&3
+fi
+
+printf -v t0 '%(%s)T' -1
+while IFS= read -rd $'\r' line; do
+    printf -v t_now '%(%s)T' -1
+    if ((t_now - t0 > timeout)); then
+        break
+    fi
+    if ((use_yad)); then
+        printf "tooltip: %s\n" "$line" >&3
+    fi
+    if ((use_notify)); then
+        notify-send "— Bandwidth Monitor —" "<tt>$line</tt>" \
+            --hint string:x-dunst-stack-tag:bandwidth-monitor \
+            --icon speedometer \
+            --expire-time 1000
+    fi
+    printf "%s\n" "$line"
+done < <(exec netq bandwidth "$interface")

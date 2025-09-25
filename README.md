@@ -168,6 +168,11 @@ netq p -l | awk '{print "netq p -r "  $1}' | sed "s/.*/'&'/" | paste -sd' ' \
 | `netq p -r ipinfo.io`                  | 167.6 ± 16.3 |    148.8 |    178.1 |  4.34 ± 0.69 |
 | `netq p -r bare-ipify.org`             | 433.6 ± 24.1 |    407.7 |    455.2 | 11.23 ± 1.55 |
 
+# Integrations
+- [`bandwidth-monitor`](contrib/bandwidth-monitor/bandwidth-monitor) : useful
+  for checking desktop traffic usage, e.g. ensuring whether uploading of a file
+  to a web service is progressing
+
 # Development
 - linter: `shellcheck`
 - formatter: `shfmt -i 4 -bn -ci -sr`

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=bandwidth-monitor
+Exec=sh -c "/home/$USER/bin/bandwidth-monitor -n -y"
+Type=Application
+Terminal=false
+Categories=Utility;
