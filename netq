@@ -12,7 +12,7 @@
 #               dig | host | nslookup
 #               jq, ping, awk, bc, date, grep, tr, uname
 
-version=0.37
+version=0.38
 l_sep="@" # separator between local IP and device/SSID name
 p_sep="•" # separator between public IP and country
 # default query priority, move up the desired line to prioritize
@@ -85,9 +85,6 @@ log() {
             _mode="info"
             ;;
         "debug")
-            _mode="debug"
-            ;;
-        *)
             _mode="debug"
             ;;
     esac
